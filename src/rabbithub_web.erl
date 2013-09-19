@@ -128,6 +128,14 @@ param(ParsedQuery, Key, DefaultValue) ->
 params(ParsedQuery, Key) ->
     [V || {K, V} <- ParsedQuery, K =:= Key].
 
+% QueryString hub.persistmsg = 0, DeliveryMode = 1 -> non-persistent message
+% QueryString hub.persistmsg = 1, DeliveryMode = 2 -> persistent message (saved to disk)
+get_msg_delivery_mode(PersistMsg) ->
+	case PersistMsg of
+		"1" -> 2;
+		"0" -> 1
+	end.
+	
 check_auth(Req, Resource, PermissionsRequired, Fun) ->
     rabbithub_auth:check_authentication
       (Req, fun (Username) ->
@@ -535,14 +543,17 @@ validate_subscription_request(Req, ParsedQuery, SourceResource, ActualUse, Fun) 
 
 extract_message(ExchangeResource, ParsedQuery, Req) ->
     RoutingKey = param(ParsedQuery, "hub.topic", ""),
+	DeliveryMode = get_msg_delivery_mode(param(ParsedQuery, "hub.persistmsg", 0)),
     ContentTypeBin = case Req:get_header_value("content-type") of
                          undefined -> undefined;
                          S -> list_to_binary(S)
                      end,
     Body = Req:recv_body(),
+	rabbit_log:info("RabbitHub message details: ~p~n", [Body]),
+	rabbit_log:info("RabbitHub message delivery mode: ~p~n", [DeliveryMode]),
     rabbit_basic:message(ExchangeResource,
                          list_to_binary(RoutingKey),
-                         [{'content_type', ContentTypeBin}],
+                         [{'content_type', ContentTypeBin},{'delivery_mode',DeliveryMode}],
                          Body).
 
 perform_request('POST', endpoint, '', exchange, Resource, ParsedQuery, Req) ->
@@ -737,7 +748,7 @@ perform_request(Method, Facet, HubMode, _ResourceType, Resource, ParsedQuery, Re
                                 {hubmode, [atom_to_list(HubMode)]},
                                 {resource, [rabbit_misc:rs(Resource)]},
                                 {querystr, [io_lib:format("~p", [ParsedQuery])]}]},
-    rabbit_log:info("RabbitHub performing request ~p~n", [Xml]),
+	rabbit_log:info("RabbitHub performing request ~p~n", [Xml]),
     rabbithub:respond_xml(Req, 200, [], none, Xml).
 
 handle_hub_post(Req) ->
